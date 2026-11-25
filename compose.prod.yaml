@@ -1,0 +1,28 @@
+services:
+  backend:
+    image: smartwork/backend:${TAG:-latest}
+    restart: always
+
+  celery-worker:
+    image: smartwork/backend:${TAG:-latest}
+    restart: always
+
+  celery-beat:
+    image: smartwork/backend:${TAG:-latest}
+    restart: always
+
+  migrate:
+    image: smartwork/backend:${TAG:-latest}
+
+  frontend:
+    image: smartwork/frontend:${TAG:-latest}
+    restart: always
+
+  db:
+    restart: always
+
+  redis:
+    restart: always
+
+  chroma:
+    restart: always

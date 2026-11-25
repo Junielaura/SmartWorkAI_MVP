@@ -1,0 +1,41 @@
+services:
+  db:
+    ports:
+      - "${POSTGRES_PORT:-5442}:5432"
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-6390}:6379"
+
+  chroma:
+    ports:
+      - "${CHROMA_PUBLISHED_PORT:-8101}:8000"
+
+  ollama:
+    ports:
+      - "${OLLAMA_PORT:-11444}:11434"
+
+  backend:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app"]
+    volumes:
+      - ./backend:/app
+
+  celery-worker:
+    volumes:
+      - ./backend:/app
+
+  celery-beat:
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      target: dev
+    image: smartwork/frontend:dev
+    command: ["npm", "run", "dev", "--", "-H", "0.0.0.0"]
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next

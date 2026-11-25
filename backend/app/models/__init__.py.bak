@@ -1,0 +1,233 @@
+from sqlmodel import SQLModel, Field, create_engine, Session, select, Relationship, datetime
+from sqlalchemy import JSON, Column
+from typing import Optional, List, Any
+from datetime import datetime
+
+
+# Database engine
+engine = create_engine("postgresql://smartwork:smartwork@localhost:5432/smartwork")
+
+
+def create_db_and_tables():
+    """Create all tables on startup."""
+    SQLModel.metadata.create_all(engine)
+
+
+def get_session():
+    """Dependency to get DB session."""
+    with Session(engine) as session:
+        yield session
+
+
+# --- Models ---
+
+
+class Organization(SQLModel, table=True):
+    __tablename__ = "organizations"
+
+    id: int = Field(default=None, primary_key=True)
+    name: str
+    plan_type: Optional[str] = Field(default=None, sa_column_kwargs={"default": "free"})
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Relationships
+    users: List["User"] = Relationship(back_populates="organization")
+    documents: List["Document"] = Relationship(back_populates="organization")
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+
+    id: int = Field(default=None, primary_key=True)
+    email: str = Field(index=True, unique=True)
+    password_hash: str
+    name: Optional[str] = Field(default=None)
+    role: str = Field(default="user")
+    is_active: bool = Field(default=True)
+    organization_id: Optional[int] = Field(default=None, foreign_key="organizations.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Relationships
+    organization: Optional["Organization"] = Relationship(back_populates="users")
+    documents: List["Document"] = Relationship(back_populates="owner")
+    conversations: List["Conversation"] = Relationship(back_populates="user")
+    tasks: List["Task"] = Relationship(
+        back_populates="assigned_to",
+        sa_relationship_kwargs={"foreign_keys": "Task.assigned_to_id"},
+    )
+    generated_files: List["GeneratedFile"] = Relationship(back_populates="creator")
+    reports: List["Report"] = Relationship(back_populates="owner")
+
+    # Organization IDs for permission checks
+    # Loaded from the associated organization
+    organization_ids: List[int] = Field(
+        default_factory=list,
+        sa_column=Column("organization_ids", JSON),
+    )
+
+    @property
+    def organizations(self) -> List["Organization"]:
+        return [self.organization] if self.organization else []
+
+
+class Document(SQLModel, table=True):
+    __tablename__ = "documents"
+
+    id: int = Field(default=None, primary_key=True)
+    filename: str
+    format: str  # pdf, docx, xlsx, csv
+    status: str  # uploaded, queued, processing, processed, failed, needs_review
+    size: Optional[int] = Field(default=None)
+    owner_id: int = Field(default=None, foreign_key="users.id")
+    organization_id: int = Field(default=None, foreign_key="organizations.id")
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    processed_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Relationships
+    owner: User = Relationship(back_populates="documents")
+    organization: Organization = Relationship(back_populates="documents")
+    versions: List["DocumentVersion"] = Relationship(back_populates="document")
+    chunks: List["DocumentChunk"] = Relationship(back_populates="document")
+    extracted_data: List["ExtractedData"] = Relationship(back_populates="document")
+    generated_files: List["GeneratedFile"] = Relationship(back_populates="document")
+
+
+class DocumentVersion(SQLModel, table=True):
+    __tablename__ = "document_versions"
+
+    id: int = Field(default=None, primary_key=True)
+    document_id: int = Field(default=None, foreign_key="documents.id")
+    version_label: str
+    storage_path: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    document: Optional["Document"] = Relationship(back_populates="versions")
+
+
+class DocumentChunk(SQLModel, table=True):
+    __tablename__ = "document_chunks"
+
+    id: int = Field(default=None, primary_key=True)
+    document_id: int = Field(default=None, foreign_key="documents.id")
+    version_id: Optional[int] = Field(default=None, foreign_key="document_versions.id")
+    content_text: str
+    chunk_type: str  # text, table, header, footer
+    index_position: int
+    chunk_metadata: dict = Field(default={}, sa_type=JSON)  # page/leaf, cell/paragraph, table info
+    embedding_id: Optional[int] = Field(default=None)
+
+    document: Optional["Document"] = Relationship(back_populates="chunks")
+
+
+class ExtractedData(SQLModel, table=True):
+    __tablename__ = "extracted_data"
+
+    id: int = Field(default=None, primary_key=True)
+    document_id: int = Field(default=None, foreign_key="documents.id")
+    structured_data: dict = Field(default={}, sa_type=JSON)
+    provenance: dict = Field(default={}, sa_type=JSON)  # page, sheet, cell, paragraph
+
+    document: Optional["Document"] = Relationship(back_populates="extracted_data")
+
+
+class Conversation(SQLModel, table=True):
+    __tablename__ = "conversations"
+
+    id: int = Field(default=None, primary_key=True)
+    user_id: int = Field(default=None, foreign_key="users.id")
+    organization_id: int = Field(default=None, foreign_key="organizations.id")
+    title: str
+    context_summary: dict = Field(default={}, sa_type=JSON)
+    last_activity_at: datetime = Field(default_factory=datetime.utcnow)
+
+    user: Optional["User"] = Relationship(back_populates="conversations")
+
+
+class GeneratedFile(SQLModel, table=True):
+    __tablename__ = "generated_files"
+
+    id: int = Field(default=None, primary_key=True)
+    document_id: Optional[int] = Field(default=None, foreign_key="documents.id")
+    report_id: Optional[int] = Field(default=None, foreign_key="reports.id")
+    filename: str
+    format: str  # docx, pdf, xlsx, pptx
+    model_version: str
+    generation_params: dict = Field(default={}, sa_type=JSON)
+    status: str  # draft, validated, published, failed
+    owner_id: int = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    validated_at: Optional[datetime] = Field(default=None)
+
+    document: Optional["Document"] = Relationship(back_populates="generated_files")
+    creator: Optional["User"] = Relationship(back_populates="generated_files")
+    report: Optional["Report"] = Relationship(back_populates="generated_files")
+
+
+class Report(SQLModel, table=True):
+    __tablename__ = "reports"
+
+    id: int = Field(default=None, primary_key=True)
+    title: str
+    period: str
+    status: str  # draft, pending_review, approved, published, failed
+    organization_id: int = Field(default=None, foreign_key="organizations.id")
+    owner_id: int = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    published_at: Optional[datetime] = Field(default=None)
+
+    owner: Optional["User"] = Relationship(back_populates="reports")
+    generated_files: List["GeneratedFile"] = Relationship(back_populates="report")
+
+
+class ReportSchedule(SQLModel, table=True):
+    __tablename__ = "report_schedules"
+
+    id: int = Field(default=None, primary_key=True)
+    report_id: Optional[int] = Field(default=None, foreign_key="reports.id")
+    frequency: str  # daily, weekly, monthly
+    timezone: str
+    next_execution: datetime
+    parameters: dict = Field(default={}, sa_type=JSON)  # sources, filters, recipients
+    is_active: bool = Field(default=True)
+    organization_id: Optional[int] = Field(
+        default=None, foreign_key="organizations.id"
+    )
+    owner_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Task(SQLModel, table=True):
+    __tablename__ = "tasks"
+
+    id: int = Field(default=None, primary_key=True)
+    title: str
+    status: str  # to_do, in_progress, validated, approved, rejected, error, completed
+    assigned_to_id: int = Field(default=None, foreign_key="users.id")
+    created_by_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    organization_id: int = Field(default=None, foreign_key="organizations.id")
+    due_date: Optional[datetime] = Field(default=None)
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    comments: dict = Field(default={}, sa_type=JSON)
+
+    assigned_to: Optional["User"] = Relationship(
+        back_populates="tasks",
+        sa_relationship_kwargs={"foreign_keys": "Task.assigned_to_id"},
+    )
+
+
+class AuditLog(SQLModel, table=True):
+    __tablename__ = "audit_logs"
+
+    id: int = Field(default=None, primary_key=True)
+    actor_id: int = Field(default=None, foreign_key="users.id")
+    action: str
+    resource_type: str
+    resource_id: Optional[int] = Field(default=None, foreign_key="documents.id")
+    result: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)

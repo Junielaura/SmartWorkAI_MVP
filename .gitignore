@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[c]
+*$py.class
+.env
+*.env.local
+*.env.*.local
+/.venv
+venv/
+ENV/
+.dockerinit
+
+# Databases
+*.db
+*.sqlite3
+
+# Ollama
+ollama/
+
+# ChromaDB
+.chroma/
+
+# Docker
+.docker/
+compose.yaml.override*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Uploads / user files
+/uploads/
+/uploads/**
+/media/
+/static/
+
+# Report generated files
+/docs/exports/
